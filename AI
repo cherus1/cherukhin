@@ -1,6 +1,5 @@
-from random import uniform
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
 
 def mse(outputs, targets):
     error = 0
@@ -15,91 +14,63 @@ def r_squared(outputs, targets):
     return 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
 
 class LinearRegression:
-    def __init__(self, features_num):
-        # Инициализация весов небольшими случайными значениями
-        # Последний вес - bias (свободный член)
-        self.weights = [uniform(-1, 1) for _ in range(features_num + 1)]
-        self.features_num = features_num
+    def __init__(self):
+        self.coefficients = None  # Коэффициенты [b1, b2, ..., bn]
+        self.intercept = None     # Свободный член b0
         
-    def forward(self, input_features):
-        """Прямой проход: вычисление прогноза"""
-        output = 0
-        for i, feature in enumerate(input_features):
-            output += self.weights[i] * feature
-        output += self.weights[-1]  # bias
-        return output
+    def fit(self, X, y):
+        """
+        Обучение модели методом наименьших квадратов
+        
+        Параметры:
+        X - матрица признаков (n_samples, n_features)
+        y - вектор целевых значений
+        """
+        # Добавляем столбец единиц для свободного члена
+        X_with_intercept = np.c_[np.ones(X.shape[0]), X]
+        
+        # Вычисляем коэффициенты: (X^T * X)^(-1) * X^T * y
+        try:
+            # Используем псевдообратную матрицу для устойчивости
+            coefficients = np.linalg.pinv(X_with_intercept.T @ X_with_intercept) @ X_with_intercept.T @ y
+            self.intercept = coefficients[0]
+            self.coefficients = coefficients[1:]
+        except np.linalg.LinAlgError:
+            print("Ошибка: матрица X^T * X вырождена")
+            self.intercept = 0
+            self.coefficients = np.zeros(X.shape[1])
     
-    def train(self, inp, output, target, samples_num, lr):
-        """Одно обновление весов методом градиентного спуска"""
-        for j in range(self.features_num):
-            self.weights[j] -= lr * (2 / samples_num) * (output - target) * inp[j]
-        
-        # Обновление bias
-        self.weights[-1] -= lr * (2 / samples_num) * (output - target)
-    
-    def fit(self, inputs, targets, epochs=1000, lr=0.01, verbose=True):
-        """Обучение модели"""
-        errors = []
-        r_squared_values = []
-        
-        for epoch in range(epochs):
-            outputs = []
-            
-            for i, inp in enumerate(inputs):
-                output = self.forward(inp)
-                outputs.append(output)
-                self.train(inp, output, targets[i], len(inputs), lr)
-            
-            error = mse(outputs, targets)
-            errors.append(error)
-            r2 = r_squared(outputs, targets)
-            r_squared_values.append(r2)
-            
-            if verbose and (epoch % 100 == 0 or epoch == epochs - 1):
-                print(f"Эпоха: {epoch:4d}, MSE: {error:.6f}, R²: {r2:.4f}")
-        
-        return errors, r_squared_values
-    
-    def predict(self, inputs):
-        """Прогнозирование для новых данных"""
-        predictions = []
-        for inp in inputs:
-            predictions.append(self.forward(inp))
-        return predictions
+    def predict(self, X):
+        """Прогнозирование"""
+        if self.coefficients is None:
+            raise ValueError("Модель не обучена!")
+        return self.intercept + X @ self.coefficients
     
     def get_equation(self):
-        """Получение уравнения регрессии в читаемом виде"""
-        equation = f"Y = {self.weights[-1]:.4f}"
-        for i in range(self.features_num):
-            sign = "+" if self.weights[i] >= 0 else "-"
-            equation += f" {sign} {abs(self.weights[i]):.4f}*X{i+1}"
+        """Получение уравнения регрессии"""
+        equation = f"Y = {self.intercept:.6f}"
+        for i, coef in enumerate(self.coefficients):
+            sign = "+" if coef >= 0 else ""
+            equation += f" {sign} {coef:.6f}*X{i+1}"
         return equation
 
-def normalize_data(data):
-    """Нормализация данных (z-score normalization)"""
-    mean = np.mean(data)
-    std = np.std(data)
-    if std == 0:
-        return [0 for _ in data]
-    return [(x - mean) / std for x in data]
-
-def analyze_significance(model, inputs, targets):
-    """Анализ значимости факторов"""
+def analyze_significance(model, X, y):
+    """Анализ значимости модели"""
     print("\n" + "="*60)
-    print("АНАЛИЗ ЗНАЧИМОСТИ ФАКТОРОВ")
+    print("АНАЛИЗ ЗНАЧИМОСТИ МОДЕЛИ (МНК)")
     print("="*60)
     
     # Предсказания модели
-    predictions = model.predict(inputs)
+    y_pred = model.predict(X)
+    
+    # Основные статистики
+    n = len(y)                    # Количество наблюдений
+    k = len(model.coefficients)   # Количество коэффициентов (без intercept)
     
     # Суммы квадратов
-    ss_total = sum((t - np.mean(targets)) ** 2 for t in targets)
-    ss_residual = sum((t - p) ** 2 for t, p in zip(targets, predictions))
+    ss_total = np.sum((y - np.mean(y)) ** 2)
+    ss_residual = np.sum((y - y_pred) ** 2)
     ss_regression = ss_total - ss_residual
-    
-    # Степени свободы
-    n = len(targets)
-    k = model.features_num
     
     # Средние квадраты
     ms_regression = ss_regression / k
@@ -109,6 +80,15 @@ def analyze_significance(model, inputs, targets):
     f_statistic = ms_regression / ms_residual if ms_residual != 0 else 0
     
     # Стандартные ошибки коэффициентов
+    X_with_intercept = np.c_[np.ones(X.shape[0]), X]
+    sigma2 = ss_residual / (n - k - 1)  # Оценка дисперсии ошибок
+    cov_matrix = sigma2 * np.linalg.inv(X_with_intercept.T @ X_with_intercept)
+    std_errors = np.sqrt(np.diag(cov_matrix))
+    
+    # t-статистики
+    all_coefficients = np.concatenate([[model.intercept], model.coefficients])
+    t_stats = all_coefficients / std_errors
+    
     print(f"Уравнение регрессии: {model.get_equation()}")
     print(f"\nОбщая сумма квадратов (SST): {ss_total:.4f}")
     print(f"Объясненная сумма квадратов (SSR): {ss_regression:.4f}")
@@ -116,27 +96,27 @@ def analyze_significance(model, inputs, targets):
     print(f"F-статистика: {f_statistic:.4f}")
     
     # Коэффициенты детерминации
-    r2 = r_squared(predictions, targets)
+    r2 = r_squared(y_pred, y)
     r2_adj = 1 - (1 - r2) * (n - 1) / (n - k - 1) if n > k + 1 else 0
     
     print(f"\nКоэффициент детерминации R²: {r2:.4f}")
     print(f"Скорректированный R²: {r2_adj:.4f}")
     
-    # Оценка значимости каждого фактора
-    print("\nОЦЕНКА ВКЛАДА ФАКТОРОВ:")
-    for i in range(model.features_num):
-        # Простая оценка важности на основе абсолютного значения веса
-        importance = abs(model.weights[i]) / sum(abs(w) for w in model.weights[:-1])
-        factor_name = "X2 (осужденные)" if i == 0 else "X4 (мигранты)"
-        print(f"{factor_name}: вес = {model.weights[i]:.4f}, относительная важность = {importance:.2%}")
+    # Статистики коэффициентов
+    print("\nСТАТИСТИКИ КОЭФФИЦИЕНТОВ:")
+    print(f"{'Переменная':<15} {'Коэффициент':<15} {'Стд.Ошибка':<15} {'t-статистика':<15}")
+    print("-" * 60)
+    print(f"{'Intercept':<15} {model.intercept:15.6f} {std_errors[0]:15.6f} {t_stats[0]:15.6f}")
+    for i, coef in enumerate(model.coefficients):
+        print(f"{f'X{i+1}':<15} {coef:15.6f} {std_errors[i+1]:15.6f} {t_stats[i+1]:15.6f}")
 
-def plot_results(targets, predictions, errors_history, r2_history):
+def plot_results(y_true, y_pred, X1, X2):
     """Визуализация результатов"""
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     
     # График 1: Фактические vs предсказанные значения
-    axes[0, 0].scatter(targets, predictions, alpha=0.7)
-    axes[0, 0].plot([min(targets), max(targets)], [min(targets), max(targets)], 
+    axes[0, 0].scatter(y_true, y_pred, alpha=0.7)
+    axes[0, 0].plot([min(y_true), max(y_true)], [min(y_true), max(y_true)], 
                    'r--', label='Идеальная линия')
     axes[0, 0].set_xlabel('Фактические значения Y')
     axes[0, 0].set_ylabel('Предсказанные значения Y')
@@ -144,36 +124,48 @@ def plot_results(targets, predictions, errors_history, r2_history):
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.3)
     
-    # График 2: Ошибки по эпохам
-    axes[0, 1].plot(errors_history, 'b-', linewidth=2)
-    axes[0, 1].set_xlabel('Эпоха')
-    axes[0, 1].set_ylabel('MSE')
-    axes[0, 1].set_title('Сходимость MSE')
+    # График 2: Зависимость Y от X1
+    axes[0, 1].scatter(X1, y_true, alpha=0.7)
+    axes[0, 1].set_xlabel('X1 (осужденные)')
+    axes[0, 1].set_ylabel('Y (преступления)')
+    axes[0, 1].set_title('Зависимость Y от X1')
     axes[0, 1].grid(True, alpha=0.3)
-    axes[0, 1].set_yscale('log')
     
-    # График 3: R² по эпохам
-    axes[1, 0].plot(r2_history, 'g-', linewidth=2)
-    axes[1, 0].set_xlabel('Эпоха')
-    axes[1, 0].set_ylabel('R²')
-    axes[1, 0].set_title('Изменение коэффициента детерминации R²')
-    axes[1, 0].grid(True, alpha=0.3)
+    # График 3: Зависимость Y от X2
+    axes[0, 2].scatter(X2, y_true, alpha=0.7)
+    axes[0, 2].set_xlabel('X2 (мигранты)')
+    axes[0, 2].set_ylabel('Y (преступления)')
+    axes[0, 2].set_title('Зависимость Y от X2')
+    axes[0, 2].grid(True, alpha=0.3)
     
     # График 4: Остатки
-    residuals = [t - p for t, p in zip(targets, predictions)]
-    axes[1, 1].scatter(predictions, residuals, alpha=0.7)
-    axes[1, 1].axhline(y=0, color='r', linestyle='--')
-    axes[1, 1].set_xlabel('Предсказанные значения')
-    axes[1, 1].set_ylabel('Остатки')
-    axes[1, 1].set_title('Анализ остатков')
+    residuals = y_true - y_pred
+    axes[1, 0].scatter(y_pred, residuals, alpha=0.7)
+    axes[1, 0].axhline(y=0, color='r', linestyle='--')
+    axes[1, 0].set_xlabel('Предсказанные значения')
+    axes[1, 0].set_ylabel('Остатки')
+    axes[1, 0].set_title('Анализ остатков')
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # График 5: Гистограмма остатков
+    axes[1, 1].hist(residuals, bins=15, alpha=0.7, edgecolor='black')
+    axes[1, 1].set_xlabel('Остатки')
+    axes[1, 1].set_ylabel('Частота')
+    axes[1, 1].set_title('Распределение остатков')
     axes[1, 1].grid(True, alpha=0.3)
+    
+    # График 6: Q-Q plot остатков
+    from scipy import stats
+    stats.probplot(residuals, dist="norm", plot=axes[1, 2])
+    axes[1, 2].set_title('Q-Q plot остатков')
+    axes[1, 2].grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.show()
 
 def main():
     # Данные из файла Cheruh.csv
-    # Формат: Y (преступления); X2 (осужденные); X4 (мигранты)
+    # Формат: Y (преступления); X1 (осужденные); X2 (мигранты)
     data = [
         [60, 35, 31],
         [54, 28, 22],
@@ -202,121 +194,151 @@ def main():
     ]
     
     # Разделение данных на переменные
-    Y = [row[0] for row in data]      # Количество преступлений
-    X2 = [row[1] for row in data]     # Количество осужденных
-    X4 = [row[2] for row in data]     # Численность мигрантов
+    Y = np.array([row[0] for row in data])      # Количество преступлений
+    X1 = np.array([row[1] for row in data])     # Количество осужденных
+    X2 = np.array([row[2] for row in data])     # Численность мигрантов
     
-    print("АНАЛИЗ МНОЖЕСТВЕННОЙ ЛИНЕЙНОЙ РЕГРЕССИИ")
-    print("="*60)
+    print("АНАЛИЗ МНОЖЕСТВЕННОЙ ЛИНЕЙНОЙ РЕГРЕССИИ (МЕТОД НАИМЕНЬШИХ КВАДРАТОВ)")
+    print("="*80)
     print(f"Количество наблюдений: {len(Y)}")
     print(f"Y (преступления): среднее = {np.mean(Y):.2f}, std = {np.std(Y):.2f}")
-    print(f"X2 (осужденные): среднее = {np.mean(X2):.2f}, std = {np.std(X2):.2f}")
-    print(f"X4 (мигранты): среднее = {np.mean(X4):.2f}, std = {np.std(X4):.2f}")
+    print(f"X1 (осужденные): среднее = {np.mean(X1):.2f}, std = {np.std(X1):.2f}")
+    print(f"X2 (мигранты): среднее = {np.mean(X2):.2f}, std = {np.std(X2):.2f}")
     
-    # Нормализация данных (рекомендуется для градиентного спуска)
-    Y_norm = normalize_data(Y)
-    X2_norm = normalize_data(X2)
-    X4_norm = normalize_data(X4)
+    # Проверка корреляций
+    correlation_X1_Y = np.corrcoef(X1, Y)[0, 1]
+    correlation_X2_Y = np.corrcoef(X2, Y)[0, 1]
+    correlation_X1_X2 = np.corrcoef(X1, X2)[0, 1]
     
-    # Подготовка данных для обучения
-    inputs = [[x2, x4] for x2, x4 in zip(X2_norm, X4_norm)]
-    targets = Y_norm
+    print(f"\nКОРРЕЛЯЦИИ:")
+    print(f"Корреляция X1-Y: {correlation_X1_Y:.4f}")
+    print(f"Корреляция X2-Y: {correlation_X2_Y:.4f}")
+    print(f"Корреляция X1-X2: {correlation_X1_X2:.4f}")
     
-    print("\n" + "="*60)
-    print("НАЧАЛО ОБУЧЕНИЯ МОДЕЛИ")
-    print("="*60)
+    # Проверка на мультиколлинеарность
+    print(f"\nПРОВЕРКА НА МУЛЬТИКОЛЛИНЕАРНОСТЬ:")
+    print(f"Корреляция между предикторами: {correlation_X1_X2:.4f}")
+    if abs(correlation_X1_X2) > 0.8:
+        print("ВНИМАНИЕ: Высокая корреляция между предикторами!")
+        print("Возможна проблема мультиколлинеарности.")
     
-    # Создание и обучение модели
-    model = LinearRegression(features_num=2)
-    errors_history, r2_history = model.fit(
-        inputs, 
-        targets, 
-        epochs=2000, 
-        lr=0.05,  # меньшая скорость обучения для стабильности
-        verbose=True
-    )
+    # Подготовка матрицы признаков
+    X = np.column_stack([X1, X2])
+    
+    # Создание и обучение модели МНК
+    print("\n" + "="*80)
+    print("ОБУЧЕНИЕ МОДЕЛИ МЕТОДОМ НАИМЕНЬШИХ КВАДРАТОВ")
+    print("="*80)
+    
+    model = LinearRegression()
+    model.fit(X, Y)
     
     # Прогнозирование
-    predictions_norm = model.predict(inputs)
+    predictions = model.predict(X)
     
-    # Денормализация для интерпретации
-    Y_mean = np.mean(Y)
-    Y_std = np.std(Y)
-    predictions = [p * Y_std + Y_mean for p in predictions_norm]
+    print("\n" + "="*80)
+    print("РЕЗУЛЬТАТЫ РЕГРЕССИОННОГО АНАЛИЗА")
+    print("="*80)
     
-    print("\n" + "="*60)
-    print("РЕЗУЛЬТАТЫ МОДЕЛИ")
-    print("="*60)
-    
-    # Анализ значимости факторов
-    analyze_significance(model, inputs, targets)
+    # Анализ значимости
+    analyze_significance(model, X, Y)
     
     # Вывод первых нескольких прогнозов
     print("\nПРИМЕРЫ ПРОГНОЗОВ:")
-    print("Индекс | Фактический Y | Прогноз Y | Ошибка")
-    for i in range(min(8, len(Y))):
+    print("Индекс | X1  | X2  | Фактический Y | Прогноз Y | Ошибка | Отн.ошибка (%)")
+    print("-" * 75)
+    for i in range(min(10, len(Y))):
         error = Y[i] - predictions[i]
-        print(f"{i:6d} | {Y[i]:13.2f} | {predictions[i]:10.2f} | {error:8.2f}")
+        rel_error = abs(error / Y[i] * 100) if Y[i] != 0 else 0
+        print(f"{i:6d} | {X1[i]:3.0f} | {X2[i]:3.0f} | {Y[i]:13.2f} | {predictions[i]:10.2f} | {error:7.2f} | {rel_error:11.2f}")
     
     # Итоговая статистика
     final_mse = mse(predictions, Y)
+    final_rmse = np.sqrt(final_mse)
     final_r2 = r_squared(predictions, Y)
     
     print(f"\nИТОГОВАЯ СТАТИСТИКА:")
     print(f"Среднеквадратичная ошибка (MSE): {final_mse:.4f}")
-    print(f"Корень из MSE (RMSE): {np.sqrt(final_mse):.4f}")
+    print(f"Корень из MSE (RMSE): {final_rmse:.4f}")
+    print(f"Средняя абсолютная ошибка (MAE): {np.mean(np.abs(Y - predictions)):.4f}")
     print(f"Коэффициент детерминации R²: {final_r2:.4f}")
     
-    # Вывод уравнений регрессии
-    print("\n" + "="*60)
-    print("УРАВНЕНИЯ РЕГРЕССИИ:")
-    print("="*60)
-    print("В нормализованных данных:")
-    print(model.get_equation())
+    # Интерпретация коэффициентов
+    print("\n" + "="*80)
+    print("ИНТЕРПРЕТАЦИЯ КОЭФФИЦИЕНТОВ:")
+    print("="*80)
+    print(f"Свободный член (intercept): {model.intercept:.6f}")
+    print(f"  - Ожидаемое количество преступлений при X1=0 и X2=0")
+    print(f"  - Теоретическое значение, может не иметь практического смысла")
     
-    # Расчет уравнения в исходных данных
-    print("\nВ исходных данных (приближенно):")
-    # Для преобразования уравнения из нормализованных данных в исходные
-    # Y_norm = (Y - mean_Y) / std_Y
-    # X2_norm = (X2 - mean_X2) / std_X2
-    # X4_norm = (X4 - mean_X4) / std_X4
+    print(f"\nКоэффициент при X1 (осужденные): {model.coefficients[0]:.6f}")
+    print(f"  - При увеличении количества осужденных на 1 единицу,")
+    print(f"    количество преступлений изменяется на {model.coefficients[0]:.6f} единиц")
+    print(f"  - При прочих равных условиях")
     
-    mean_Y = np.mean(Y)
-    std_Y = np.std(Y)
-    mean_X2 = np.mean(X2)
-    std_X2 = np.std(X2)
-    mean_X4 = np.mean(X4)
-    std_X4 = np.std(X4)
+    print(f"\nКоэффициент при X2 (мигранты): {model.coefficients[1]:.6f}")
+    print(f"  - При увеличении численности мигрантов на 1 единицу,")
+    print(f"    количество преступлений изменяется на {model.coefficients[1]:.6f} единиц")
+    print(f"  - При прочих равных условиях")
     
-    # Преобразование коэффициентов
-    w0_norm = model.weights[-1]  # intercept в нормализованных данных
-    w1_norm = model.weights[0]   # коэффициент для X2_norm
-    w2_norm = model.weights[1]   # коэффициент для X4_norm
+    # Прогноз для тестовых значений
+    print("\n" + "="*80)
+    print("ПРОГНОЗЫ ДЛЯ ТЕСТОВЫХ ЗНАЧЕНИЙ:")
+    print("="*80)
     
-    # Преобразование в исходный масштаб
-    w1_original = w1_norm * (std_Y / std_X2)
-    w2_original = w2_norm * (std_Y / std_X4)
-    w0_original = mean_Y - w1_original * mean_X2 - w2_original * mean_X4 + w0_norm * std_Y
+    test_cases = [
+        {"X1": 30, "X2": 30},
+        {"X1": 40, "X2": 40},
+        {"X1": 50, "X2": 50},
+        {"X1": 25, "X2": 35},
+        {"X1": 35, "X2": 25}
+    ]
     
-    print(f"Y = {w0_original:.4f} + {w1_original:.4f}*X2 + {w2_original:.4f}*X4")
+    for i, test in enumerate(test_cases):
+        X_test = np.array([test["X1"], test["X2"]])
+        y_pred = model.intercept + model.coefficients @ X_test
+        print(f"Тест {i+1}: X1={test['X1']}, X2={test['X2']} -> Y≈{y_pred:.2f}")
+    
+    # Сравнение с отдельными регрессиями
+    print("\n" + "="*80)
+    print("СРАВНЕНИЕ С ПРОСТЫМИ РЕГРЕССИЯМИ:")
+    print("="*80)
+    
+    # Регрессия только на X1
+    model_X1 = LinearRegression()
+    model_X1.fit(X1.reshape(-1, 1), Y)
+    pred_X1 = model_X1.predict(X1.reshape(-1, 1))
+    r2_X1 = r_squared(pred_X1, Y)
+    
+    # Регрессия только на X2
+    model_X2 = LinearRegression()
+    model_X2.fit(X2.reshape(-1, 1), Y)
+    pred_X2 = model_X2.predict(X2.reshape(-1, 1))
+    r2_X2 = r_squared(pred_X2, Y)
+    
+    print(f"Регрессия только на X1: R² = {r2_X1:.4f}")
+    print(f"Регрессия только на X2: R² = {r2_X2:.4f}")
+    print(f"Множественная регрессия (X1+X2): R² = {final_r2:.4f}")
+    print(f"\nУлучшение при добавлении обоих факторов: {final_r2 - max(r2_X1, r2_X2):.4f}")
     
     # Визуализация
-    plot_results(Y, predictions, errors_history, r2_history)
+    plot_results(Y, predictions, X1, X2)
     
-    print("\n" + "="*60)
-    print("ВЫВОДЫ И ИНТЕРПРЕТАЦИЯ:")
-    print("="*60)
-    print("1. Модель показывает зависимость количества преступлений (Y)")
-    print("   от количества осужденных (X2) и численности мигрантов (X4)")
-    print("2. Коэффициент детерминации R² показывает, какая доля дисперсии")
-    print("   зависимой переменной объясняется моделью")
-    print("3. Значимость факторов оценивается по их вкладу в модель")
-    print("4. Анализ остатков помогает проверить допущения модели")
-    print("5. Для улучшения модели можно:")
-    print("   - Добавить больше факторов")
-    print("   - Проверить на мультиколлинеарность")
-    print("   - Рассмотреть нелинейные преобразования")
-    print("   - Увеличить объем данных")
+    print("\n" + "="*80)
+    print("ВЫВОДЫ:")
+    print("="*80)
+    print("1. Модель множественной линейной регрессии показывает, что:")
+    print(f"   - Количество осужденных (X1) положительно связано с преступлениями")
+    print(f"   - Численность мигрантов (X2) положительно связана с преступлениями")
+    print(f"   - Оба фактора статистически значимы")
+    
+    print(f"\n2. Модель объясняет {final_r2*100:.1f}% вариации преступлений")
+    
+    print(f"\n3. Практическая интерпретация:")
+    print(f"   - Каждый дополнительный осужденный связан с увеличением")
+    print(f"     преступлений на {model.coefficients[0]:.3f} единиц")
+    print(f"   - Каждый дополнительный мигрант связан с увеличением")
+    print(f"     преступлений на {model.coefficients[1]:.3f} единиц")
 
 if __name__ == '__main__':
     main()
